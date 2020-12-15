@@ -79,7 +79,7 @@ func NSImages(op *SyncOption) ([]string, error) {
 	return imageNames, nil
 }
 
-// 并发获取 k8s.gcr.io/${imgName}:${tag} 写入 chan
+// 并发获取 k8s.gcr.io 仓库下所有 ${imgName}:${tag} 写入 chan,并将镜像信息追加到 images 列表后返回该列表
 func ImageNames(opt *SyncOption) (Images, error) {
 	// 获取所有 ${imgName}
 	publicImageNames, err := NSImages(opt)
@@ -88,6 +88,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 	}
 	log.Infof("sync ns count: %d in k8s.gcr.io", len(publicImageNames))
 
+	// 创建协程池
 	pool, err := ants.NewPool(opt.QueryLimit, ants.WithPreAlloc(true), ants.WithPanicHandler(func(i interface{}) {
 		log.Error(i)
 	}))
@@ -97,6 +98,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 
 	// 并发写入镜像信息结构体
 	var images Images
+	// 构建消费者管道,将构建好的镜像信息 Image 传入到 images 列表中,最终返回该列表
 	imgCh := make(chan Image, opt.QueryLimit)
 	err = pool.Submit(func() {
 		for image := range imgCh {
@@ -115,6 +117,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 	for _, tmpImageName := range publicImageNames {
 		imageBaseName := tmpImageName
 		var iName string
+		// k8s.gcr.io/${imgName}
 		iName = repo + imageBaseName
 
 		// 协程池提交生产者写入 channel
@@ -125,6 +128,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 				log.Debugf("context done exit while %s", iName)
 			default:
 				log.Debugf("query image [%s] tags...", iName)
+				// 获取 k8s.gcr.io/${imgName} 镜像的所有 Tags
 				tags, err := getImageTags(iName, TagsOption{
 					ctx:     opt.Ctx,
 					Timeout: time.Second * 25,
@@ -135,7 +139,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 				}
 				log.Debugf("image [%s] tags count: %d", iName, len(tags))
 
-				// 构建带tag的镜像名
+				// 构建带 tag 的镜像结构体,其中镜像名称不带仓库名,${imgName}:${tag}
 				for _, tag := range tags {
 					imgCh <- Image{
 						Name:       imageBaseName,
@@ -155,7 +159,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 	return images, nil
 }
 
-
+// 获取指定镜像所有 Tags
 func getImageTags(imageName string, opt TagsOption) ([]string, error) {
 	srcRef, err := docker.ParseReference("//" + imageName)
 	if err != nil {

@@ -88,7 +88,7 @@ func Run(opt *SyncOption) {
 }
 
 func Sync(opt *SyncOption) error {
-    // 所有的镜像名称
+    // k8s.gcr.io 仓库下所有的镜像名称 ${imgName}:${tag} 的列表
 	allImages, err := ImageNames(opt)
 	if err != nil {
 		return err
@@ -96,10 +96,12 @@ func Sync(opt *SyncOption) error {
     // 同步
 	imgs := SyncImages(allImages, opt)
 	log.Info("sync done")
+	// 同步完成后,对镜像列表进行汇总报告
 	report(imgs)
 	return nil
 }
 
+// 同步镜像
 func SyncImages(imgs Images, opt *SyncOption) Images {
 
 	processWg := new(sync.WaitGroup)
@@ -109,6 +111,7 @@ func SyncImages(imgs Images, opt *SyncOption) Images {
 		opt.Limit = DefaultLimit
 	}
 
+	// 创建协程池
 	pool, err := ants.NewPool(opt.Limit, ants.WithPreAlloc(true), ants.WithPanicHandler(func(i interface{}) {
 		log.Error(i)
 	}))
@@ -116,6 +119,7 @@ func SyncImages(imgs Images, opt *SyncOption) Images {
 	if err != nil {
 		log.Fatalf("failed to create goroutines pool: %s", err)
 	}
+	// Images 实现了"sort.Interface" 接口,可对内部元素进行排序
 	sort.Sort(imgs)
 	for i := 0; i < len(imgs); i++ {
 		k := i
@@ -126,12 +130,14 @@ func SyncImages(imgs Images, opt *SyncOption) Images {
 			case <-opt.Ctx.Done():
 			default:
 				log.Debug("process image: ", imgs[k].String())
+				// 判断是否需要同步,并返回未同步镜像的 CheckSum
 				newSum, needSync := checkSync(imgs[k], opt)
 				if !needSync {
 					return
 				}
 
 				rerr := retry(opt.Retry, opt.RetryInterval, func() error {
+					// 同步镜像到指定的 DockerHub
 					return sync2DockerHub(imgs[k], opt)
 				})
 				if rerr != nil {
@@ -141,7 +147,7 @@ func SyncImages(imgs Images, opt *SyncOption) Images {
 				}
 				imgs[k].Success = true
 
-				//写入校验值
+				// 将同步镜像的 CheckSum 写入键值对数据库
 				if sErr := opt.CheckSumer.Save(imgs[k].Key(), newSum); sErr != nil {
 					log.Errorf("failed to save image [%s] checksum: %s", imgs[k].String(), sErr)
 				}
@@ -157,9 +163,11 @@ func SyncImages(imgs Images, opt *SyncOption) Images {
 	return imgs
 }
 
+// 将镜像同步到指定的 DockerHub
 func sync2DockerHub(image *Image, opt *SyncOption) error {
-
+	// 源镜像名称
 	srcImg := image.String()
+	// 同步的镜像名称,
 	destImg := fmt.Sprintf("%s/%s/%s:%s", opt.PushRepo, opt.PushNS, image.Name, image.Tag)
 
 	log.Infof("syncing %s => %s", srcImg, destImg)
@@ -194,6 +202,7 @@ func sync2DockerHub(image *Image, opt *SyncOption) error {
 	}}
 
 	log.Debugf("copy %s to %s ...", image.String(), opt.PushRepo)
+	// 进行同步,
 	_, err = copy.Image(ctx, policyContext, destRef, srcRef, &copy.Options{
 		SourceCtx:          sourceCtx,
 		DestinationCtx:     destinationCtx,
@@ -203,7 +212,7 @@ func sync2DockerHub(image *Image, opt *SyncOption) error {
 	return err
 }
 
-//已经同步过了没
+// 判断是否已经同步,并返回未同步镜像的 CheckSum
 func checkSync(image *Image, opt *SyncOption) (uint32, bool) {
 	var (
 		bodySum uint32
@@ -212,6 +221,7 @@ func checkSync(image *Image, opt *SyncOption) (uint32, bool) {
 	imgFullName := image.String()
 	err := retry(opt.Retry, opt.RetryInterval, func() error {
 		var mErr error
+		// 获取指定镜像的 CheckSum
 		bodySum, mErr = GetManifestBodyCheckSum(imgFullName)
 		if mErr != nil {
 			return mErr
@@ -228,7 +238,8 @@ func checkSync(image *Image, opt *SyncOption) (uint32, bool) {
 		return 0, false
 	}
 
-	// db查询校验值是否相等，只同步一个ns下镜像，所以bucket的key只用baseName:tag
+	// db 查询校验值是否相等.如果不相等,返回 true
+	// 因为只同步一个ns下的镜像，所以 bucket 的 key 只用 baseName:tag
 	diff, err = opt.CheckSumer.Diff(image.Key(), bodySum)
 	if err != nil {
 		image.Err = err
@@ -238,16 +249,18 @@ func checkSync(image *Image, opt *SyncOption) (uint32, bool) {
 
 	log.Debugf("%s diff:%v", imgFullName, diff)
 
-	if !diff { //相同
+	// 如果相同,则 image 结构体的 Success,CacheHit 为 true.用于统计同步了多少镜像
+	if !diff {
 		image.Success = true
 		image.CacheHit = true
 		log.Debugf("image [%s] not changed, skip sync...", imgFullName)
 		return 0, false
 	}
-
+	// 否则,返回远程镜像的 CheckSum
 	return bodySum, true
 }
 
+// 汇总统计,成功,缓存命中,失败的镜像个数,并进行输出
 func report(images Images) {
 
 	var successCount, failedCount, cacheHitCount int
