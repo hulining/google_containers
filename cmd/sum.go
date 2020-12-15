@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/binary"
 	"fmt"
+	// go 键值对存储库
 	bolt "github.com/etcd-io/bbolt"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -21,6 +22,7 @@ func NewSumCommand() *cobra.Command {
 }
 
 func listCheckSum(cmd *cobra.Command, args []string) {
+	// 打开 boltdb 键值对文件
 	db, err := bolt.Open(args[0], 0600, &bolt.Options{
 		Timeout:  1 * time.Second,
 		ReadOnly: true,
@@ -29,10 +31,15 @@ func listCheckSum(cmd *cobra.Command, args []string) {
 		log.Fatalf("open the boltdb file %s error: %v", args[0], err)
 	}
 	defer db.Close()
+	// 以只读事务方式执行传入 View() 的函数
 	if err := db.View(func(tx *bolt.Tx) error {
+		// ForEach(): 对根 Bucket 执行传入的函数,其中 Bucket 表示数据库中键值对的集合
 		return tx.ForEach(func(bName []byte, b *bolt.Bucket) error {
+			// 键值对集合的游标指针
 			c := b.Cursor()
+			// 对键值对进行遍历,并输出
 			for k, v := c.First(); k != nil; k, v = c.Next() {
+				// 值的长度为10
 				if len(v) != int(types.Uint32) {
 					fmt.Printf("wrong: bucket:%s key=%s\n", bName, k)
 					continue
@@ -56,8 +63,10 @@ func NewGetSumCommand() *cobra.Command {
 	}
 }
 
+// 获取镜像的 CheckSum
 func getSum(cmd *cobra.Command, args []string) {
 	for _, image := range args {
+		// 获取镜像的 CheckSum
 		crc32Value, err := core.GetManifestBodyCheckSum(image)
 		if err != nil {
 			log.Errorf("%s|%v", image, err)

@@ -19,6 +19,8 @@ func NewSyncComamnd(Options *core.SyncOption) *cobra.Command {
 		Long: `
 Sync docker images.`,
 		//Args:   cobra.ExactArgs(1),
+		// 1. 检验用户名密码是否存在,并尝试登录 registry.
+		// 2. 打开键值对数据库文件
 		PreRunE: Options.PreRun,
 		Run: func(cmd *cobra.Command, args []string) {
 			core.Run(Options)

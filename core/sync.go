@@ -21,24 +21,31 @@ import (
 )
 
 func Run(opt *SyncOption) {
-
+	// 设置默认值
 	opt = opt.setDefault()
-
+	// 关闭键值对数据库文件
 	defer func() {
 		_ = opt.Closer()
 	}()
+
+	// 系统进程信号管道
 	Sigs := make(chan os.Signal)
 
+	// 关闭上下文的管道
 	var cancel context.CancelFunc
 	opt.Ctx, cancel = context.WithCancel(context.Background())
 	if opt.CmdTimeout > 0 {
+		// 超时管道
 		opt.Ctx, cancel = context.WithTimeout(opt.Ctx, opt.CmdTimeout)
 	}
 
 	var cancelOnce sync.Once
 	defer cancel()
+
+	// 创建 goroutines 接收系统信号,并在接收到系统信号后仅完成一次动作
 	go func() {
 		for range Sigs {
+			// 仅执行一次的动作
 			cancelOnce.Do(func() {
 				log.Info("Receiving a termination signal, gracefully shutdown!")
 				cancel()
@@ -46,8 +53,10 @@ func Run(opt *SyncOption) {
 			log.Info("The goroutines pool has stopped, please wait for the remaining tasks to complete.")
 		}
 	}()
+	// 仅接收 SIGINT,SIGTERM 系统信号
 	signal.Notify(Sigs, syscall.SIGINT, syscall.SIGTERM)
 
+	// 创建 "k8s.gcr.io" 键值对集合
 	if err := opt.CheckSumer.CreatBucket("k8s.gcr.io"); err != nil {
 		log.Error(err)
 	}
@@ -57,6 +66,7 @@ func Run(opt *SyncOption) {
 			opt.LiveInterval = 9 * time.Minute
 		}
 		go func() {
+		    // for-select 实现超时机制,10 分钟没任何输出就会被强制关闭
 			for {
 				select {
 				case <-opt.Ctx.Done():
@@ -71,17 +81,19 @@ func Run(opt *SyncOption) {
 	//for _, ns := range namespace {
 	//	g.Sync(ns)
 	//}
+	// 开始同步
 	if err := Sync(opt); err != nil {
 		log.Fatal(err)
 	}
 }
 
 func Sync(opt *SyncOption) error {
+    // 所有的镜像名称
 	allImages, err := ImageNames(opt)
 	if err != nil {
 		return err
 	}
-
+    // 同步
 	imgs := SyncImages(allImages, opt)
 	log.Info("sync done")
 	report(imgs)

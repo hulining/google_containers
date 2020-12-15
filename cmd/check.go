@@ -36,6 +36,8 @@ func NewCheckComamnd() *cobra.Command {
 							continue
 						}
 
+						// 如果镜像名称与键值对数据库中镜像名称一致,则通过镜像相关接口获取镜像的 CheckSum,
+						// 并输出本地(键值对数据库中)保存的 CheckSum 与远程(通过接口返回的) CheckSum
 						if strings.Compare(fmt.Sprintf("%s/%s", bName, k), args[0]) == 0 {
 							lValue := binary.LittleEndian.Uint32(v)
 							rValue, err := core.GetManifestBodyCheckSum(args[0])
@@ -74,6 +76,7 @@ func NewReplaceComamnd() *cobra.Command {
 			defer db.Close()
 
 			for _, image := range args {
+				// 获取远程镜像的 CheckSum
 				rValue, err := core.GetManifestBodyCheckSum(image)
 				if err != nil {
 					log.Errorf("%s|%v", image, err)

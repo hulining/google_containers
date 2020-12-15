@@ -8,8 +8,11 @@ import (
 
 	"github.com/containers/image/v5/docker"
 	"github.com/containers/image/v5/types"
+	// json 解析工具
 	jsoniter "github.com/json-iterator/go"
+	// 高性能 goroutine 池
 	"github.com/panjf2000/ants/v2"
+	// HTTP 客户端
 	"github.com/parnurzeal/gorequest"
 	log "github.com/sirupsen/logrus"
 )
@@ -21,9 +24,10 @@ const (
 )
 
 
-// baseName，不是full name
+// baseName,不是 full name.如 k8s.gcr.io/${imgName}:tag 中的 ${imgName}
 func NSImages(op *SyncOption) ([]string, error) {
 	log.Info("get k8s.gcr.io public images...")
+	// 请求 https://k8s.gcr.io/v2/tags/list
 	resp, body, errs := gorequest.New().
 		Timeout(DefaultHTTPTimeout).
 		Retry(op.Retry, op.RetryInterval).
@@ -36,6 +40,7 @@ func NSImages(op *SyncOption) ([]string, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	var imageNames []string
+	// 获取 json 数据 "child" 标签下的镜像名称
 	err := jsoniter.UnmarshalFromString(jsoniter.Get(body, "child").ToString(), &imageNames)
 	if err != nil {
 		return nil, err
@@ -44,7 +49,7 @@ func NSImages(op *SyncOption) ([]string, error) {
 	if len(op.AdditionNS) > 0 {
 		log.Debugf("AdditionNS: %v", op.AdditionNS)
 	}
-
+	// 额外的镜像名称
 	for _, v := range op.AdditionNS {
 		resp, body, errs := gorequest.New().
 			Timeout(DefaultHTTPTimeout).
@@ -67,20 +72,20 @@ func NSImages(op *SyncOption) ([]string, error) {
 		for k := range nsImageNames {
 			nsImageNames[k] = v + "/" + nsImageNames[k]
 		}
+		// 追加到 imageNames
 		imageNames = append(imageNames, nsImageNames...)
 	}
 
 	return imageNames, nil
 }
 
-//并发获取k8s.gcr.io/$imgName:tag写入chan
+// 并发获取 k8s.gcr.io/${imgName}:${tag} 写入 chan
 func ImageNames(opt *SyncOption) (Images, error) {
-
+	// 获取所有 ${imgName}
 	publicImageNames, err := NSImages(opt)
 	if err != nil {
 		return nil, err
 	}
-
 	log.Infof("sync ns count: %d in k8s.gcr.io", len(publicImageNames))
 
 	pool, err := ants.NewPool(opt.QueryLimit, ants.WithPreAlloc(true), ants.WithPanicHandler(func(i interface{}) {
@@ -90,7 +95,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 		log.Fatalf("failed to create goroutines pool: %s", err)
 	}
 
-	//并发写入镜像信息结构体
+	// 并发写入镜像信息结构体
 	var images Images
 	imgCh := make(chan Image, opt.QueryLimit)
 	err = pool.Submit(func() {
@@ -112,7 +117,7 @@ func ImageNames(opt *SyncOption) (Images, error) {
 		var iName string
 		iName = repo + imageBaseName
 
-		//协程池提交生产者写入channel
+		// 协程池提交生产者写入 channel
 		err = pool.Submit(func() {
 			defer imgGetWg.Done()
 			select {
@@ -129,8 +134,8 @@ func ImageNames(opt *SyncOption) (Images, error) {
 					return
 				}
 				log.Debugf("image [%s] tags count: %d", iName, len(tags))
-				//构建带tag的镜像名
 
+				// 构建带tag的镜像名
 				for _, tag := range tags {
 					imgCh <- Image{
 						Name:       imageBaseName,

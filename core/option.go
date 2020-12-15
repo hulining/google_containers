@@ -46,13 +46,14 @@ func (s *SyncOption) PreRun(cmd *cobra.Command, args []string) error {
 		s.PushNS = s.Auth.User
 	}
 
-
+	// 校验用户名密码,登陆 registry
 	if err := s.Verify(); err != nil {
 		return err
 	}
 
 	log.Infof("Login Succeeded for %s", s.PushRepo)
 
+	// 打开键值对数据库文件
 	db, err := bolt.Open(s.DbFile, 0660, &bolt.Options{Timeout: 10 * time.Second})
 	if err != nil {
 		return errors.Wrapf(err, "open the boltdb file %s", s.DbFile)
@@ -89,7 +90,7 @@ func (s *SyncOption) Verify() error {
 	if !strings.HasPrefix(authConf.ServerAddress, "https://") && !strings.HasPrefix(authConf.ServerAddress, "http://") {
 		authConf.ServerAddress = "https://" + authConf.ServerAddress
 	}
-
+	// 创建 registry 服务
 	RegistryService, err := registry.NewService(registry.ServiceOptions{})
 	if err != nil {
 		return err
@@ -101,6 +102,7 @@ func (s *SyncOption) Verify() error {
 	)
 
 	for count := s.LoginRetry; count > 0; count-- {
+		// 尝试登录
 		status, _, err = RegistryService.Auth(s.Ctx, authConf, "")
 		if err != nil && contains(errContains, err.Error()) {
 			<-time.After(time.Second * 1)
